@@ -249,7 +249,7 @@
               hardware.deviceTree.package = lib.mkForce (mkMergedDeviceTree {
                 inherit pkgs;
                 inherit (config.boot) kernelPackages;
-                boardDtbRelPath = "broadcom/bcm2710-rpi-zero-2-w.dtb";
+                boardDtbRelPath = "broadcom/bcm2837-rpi-zero-2-w.dtb";
               });
             })
           ];
