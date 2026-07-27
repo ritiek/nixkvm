@@ -132,6 +132,7 @@
               wireless = {
                 enable = true;
                 interfaces = [ "wlan0" ];
+                networks."YOUR_SSID_HERE".psk = "YOUR_PASSWORD_HERE";
               };
               interfaces = {
                 "wlan0".useDHCP = true;
