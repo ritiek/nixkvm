@@ -1,4 +1,4 @@
-This builds an Image for a Raspberry Pi 4 that runs PiKVM.
+This builds an Image for a Raspberry Pi 3, Pi 4, or Pi Zero 2 W that runs PiKVM.
 
 # Usage
 
