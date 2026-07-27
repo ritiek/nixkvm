@@ -184,6 +184,8 @@
             # precompiled Raspberry Pi firmware overlays (dtoverlay=), which are
             # confirmed portable across the Pi 3/4/Zero-2W family.
             services.kvmd.enable = true;
+            services.kvmd.janus.enable = true;
+            services.kvmd.janus.openFirewall = true;
 
             boot.kernelModules = [ "dwc2" "tc358743" ];
             boot.kernelParams = [ "cma=192M" ];
