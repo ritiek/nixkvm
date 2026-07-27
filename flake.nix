@@ -25,6 +25,57 @@
         argsOverride.kernelPatches = baseKernel.kernelPatches ++ pikvmKernelPatches;
       });
 
+      # NixOS's U-Boot + generic-extlinux-compatible boot chain loads DTBs
+      # straight from a static FDTDIR (the plain kernel-package dtbs),
+      # completely bypassing whatever RPi firmware would have constructed
+      # from config.txt `dtoverlay=` at boot time. Overlays must instead be
+      # merged into the DTB files themselves at Nix build time.
+      #
+      # nixpkgs' hardware.deviceTree.overlays (pkgs.deviceTree.applyOverlays)
+      # requires each overlay's root "compatible" string to intersect the
+      # target DTB's "compatible" list. RPi's own overlays (tc358743.dtbo
+      # included) all declare a bare `compatible = "brcm,bcm2835";` (the
+      # original Pi1 SoC) regardless of which board they're actually for,
+      # because RPi's own firmware dtoverlay mechanism never checks
+      # "compatible" at merge time. That means applyOverlays silently SKIPS
+      # our overlays on every real modern board DTB (bcm2837/bcm2711/etc.
+      # never match "brcm,bcm2835") -- a silent no-op, not a build failure.
+      #
+      # So instead we call `fdtoverlay` (from pkgs.dtc) directly: the same
+      # underlying libfdt merge RPi firmware itself uses, which does NOT
+      # check "compatible" at all. We only touch the one board DTB we
+      # actually boot, leaving the rest of the kernel's dtbs tree untouched.
+      mkMergedDeviceTree = { pkgs, kernelPackages, boardDtbRelPath }: let
+        dwc2PeripheralDts = pkgs.writeText "dwc2-peripheral.dts" ''
+          /dts-v1/;
+          /plugin/;
+          / {
+            compatible = "brcm,bcm2835";
+            fragment@0 {
+              target = <&usb>;
+              __overlay__ {
+                compatible = "brcm,bcm2835-usb";
+                dr_mode = "peripheral";
+                g-np-tx-fifo-size = <32>;
+                g-rx-fifo-size = <558>;
+                g-tx-fifo-size = <512 512 512 512 512 256 256>;
+                status = "okay";
+              };
+            };
+          };
+        '';
+      in pkgs.runCommand "device-tree-merged" {
+        nativeBuildInputs = [ pkgs.dtc ];
+      } ''
+        cp -r ${kernelPackages.kernel}/dtbs $out
+        chmod -R u+w $out
+        dtc -@ -I dts -O dtb -o dwc2-peripheral.dtbo ${dwc2PeripheralDts}
+        fdtoverlay -i "$out/${boardDtbRelPath}" -o merged.dtb \
+          ${pkgs.raspberrypifw}/share/raspberrypi/boot/overlays/tc358743.dtbo \
+          dwc2-peripheral.dtbo
+        mv merged.dtb "$out/${boardDtbRelPath}"
+      '';
+
       # Modules shared by every board target (Pi 4 and Pi Zero 2 W).
       sharedModules = [
         "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
@@ -136,9 +187,17 @@
 
             boot.kernelModules = [ "dwc2" "tc358743" ];
             boot.kernelParams = [ "cma=192M" ];
+            # sd-image-aarch64's cross-SBC initrd list FATALs on modules the rpi
+            # kernel lacks; force the minimal set it actually has.
+            boot.initrd.availableKernelModules = lib.mkForce [ "ext4" "mmc_block" "usbhid" "usb_storage" "xhci_hcd" "vc4" "pcie-brcmstb" "reset-raspberrypi" ];
             services.udev.extraRules = ''
               KERNEL=="vcio", GROUP="video", MODE="0660"
             '';
+
+            # (Device-tree overlay merging into FDTDIR is handled per-board
+            # below via mkMergedDeviceTree, since fdtoverlay needs to know
+            # which single board DTB to patch. See mkMergedDeviceTree's
+            # comment above for the full rationale.)
 
             # Append our overlays to the config.txt already written by
             # sd-image-aarch64.nix (populateFirmwareCommands has no declared
@@ -169,9 +228,14 @@
           specialArgs = { inherit inputs; };
           system = "aarch64-linux";
           modules = sharedModules ++ [
-            ({ pkgs, ... }: {
+            ({ pkgs, lib, config, ... }: {
               boot.kernelPackages = mkPiKvmKernel { inherit pkgs; rpiVersion = 4; };
               services.kvmd.variant = "v2-hdmi-rpi4";
+              hardware.deviceTree.package = lib.mkForce (mkMergedDeviceTree {
+                inherit pkgs;
+                inherit (config.boot) kernelPackages;
+                boardDtbRelPath = "broadcom/bcm2711-rpi-4-b.dtb";
+              });
             })
           ];
         };
@@ -179,9 +243,14 @@
           specialArgs = { inherit inputs; };
           system = "aarch64-linux";
           modules = sharedModules ++ [
-            ({ pkgs, ... }: {
+            ({ pkgs, lib, config, ... }: {
               boot.kernelPackages = mkPiKvmKernel { inherit pkgs; rpiVersion = 3; };
               services.kvmd.variant = "v2-hdmi-zero2w";
+              hardware.deviceTree.package = lib.mkForce (mkMergedDeviceTree {
+                inherit pkgs;
+                inherit (config.boot) kernelPackages;
+                boardDtbRelPath = "broadcom/bcm2710-rpi-zero-2-w.dtb";
+              });
             })
           ];
         };
